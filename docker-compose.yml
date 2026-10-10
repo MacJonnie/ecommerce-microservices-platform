@@ -1,0 +1,69 @@
+services:
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      USER_SERVICE_URL: http://user-service:3001
+      CATALOG_SERVICE_URL: http://catalog-service:3002
+
+    depends_on:
+      - user-service
+      - catalog-service
+
+    networks:
+      - ecommerce-network
+
+
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+
+    ports:
+      - "3001:3001"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      MONGODB_CONNECTION: ${USER_MONGODB_CONNECTION}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+
+    networks:
+      - ecommerce-network
+
+
+  catalog-service:
+    build:
+      context: ./services/catalog-service
+      dockerfile: Dockerfile
+
+    ports:
+      - "3002:3002"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      MONGODB_CONNECTION: ${CATALOG_MONGODB_CONNECTION}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+
+    networks:
+      - ecommerce-network
+
+
+networks:
+  ecommerce-network:
+    driver: bridge

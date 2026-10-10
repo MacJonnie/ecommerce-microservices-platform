@@ -49,7 +49,7 @@ app.use(gatewayRateLimiter);
  * express.json() does not interfere with multipart/form-data
  * because it only parses JSON requests.
  */
-app.use(express.json({ limit: "1mb" }));
+// app.use(express.json({ limit: "1mb" }));
 
 // Gateway health check
 app.get("/health", (req, res) => {

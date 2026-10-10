@@ -34,7 +34,7 @@ router.post("/logout", logoutUser); // Logout
 // Protected Route
 router.get("/profile", authMiddleware, getUserProfile) // Get Logged in User Profile
 
-router.patch("/profile", authMiddleware, updateUserProfile); // Edit User
+router.patch("/profile", authMiddleware, updateUserProfile); // Edit User Profile
 
 router.patch("/change-password", authMiddleware, changePassword); // Change Password
 
@@ -45,11 +45,11 @@ router.get("/:id", authMiddleware, authorizeRoles("admin"), getUserById ); // ge
 
 router.delete("/:id", authMiddleware, authorizeRoles("admin"), deleteUser ); // Delete user
 
-router.patch("/:id", authMiddleware, authorizeRoles("admin"), adminUpdateUser ); // update user
+router.patch("/:id", authMiddleware, authorizeRoles("admin"), adminUpdateUser ); // Update User Profile by Admin
 
-router.patch("/:id/role", authMiddleware, authorizeRoles("admin"), updateUserRole ); // Update user role
+router.patch("/:id/role", authMiddleware, authorizeRoles("admin"), updateUserRole ); // Update User Role
 
-router.patch("/:id/status", authMiddleware, authorizeRoles("admin"), updateUserStatus ); // Update user status
+router.patch("/:id/status", authMiddleware, authorizeRoles("admin"), updateUserStatus ); // Update User Active Status.
 
 
 export default router;

@@ -14,14 +14,8 @@ const productSchema = new mongoose.Schema(
       type: String,
       required: [true, "Product description is required."],
       trim: true,
-      minlength: [
-        10,
-        "Product description must be at least 10 characters.",
-      ],
-      maxlength: [
-        2000,
-        "Product description cannot exceed 2000 characters.",
-      ],
+      minlength: [10, "Product description must be at least 10 characters."],
+      maxlength: [2000, "Product description cannot exceed 2000 characters."],
     },
 
     price: {
@@ -56,6 +50,11 @@ const productSchema = new mongoose.Schema(
       ],
 
       default: [],
+
+      validate: {
+        validator: (images) => images.length <= 6,
+        message: "A product cannot have more than 6 images.",
+      },
     },
 
     sku: {

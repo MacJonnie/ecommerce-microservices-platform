@@ -5,9 +5,7 @@ export const uploadImage = (buffer, options = {}) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         resource_type: "image",
-
         folder: "ecommerce-platform/products",
-
         ...options,
       },
       (error, result) => {
@@ -28,10 +26,9 @@ export const deleteImage = async (publicId) => {
     return;
   }
 
-  const result = await cloudinary.uploader.destroy(publicId, {
+  return cloudinary.uploader.destroy(publicId, {
     resource_type: "image",
+    type: "upload",
     invalidate: true,
   });
-
-  return result;
 };
