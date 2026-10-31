@@ -8,6 +8,8 @@ import rateLimit from "express-rate-limit";
 import {
   userServiceProxy,
   catalogServiceProxy,
+  cartServiceProxy,
+  orderServiceProxy,
 } from "./routes/proxyRoutes.js";
 
 import errorMiddleware from "./middleware/errorMiddleware.js";
@@ -70,6 +72,18 @@ app.use(
 app.use(
   "/api/products",
   catalogServiceProxy
+);
+
+// Cart Service
+app.use(
+  "/api/cart",
+  cartServiceProxy
+);
+
+// Order Service
+app.use(
+  "/api/orders",
+  orderServiceProxy
 );
 
 // Unknown route

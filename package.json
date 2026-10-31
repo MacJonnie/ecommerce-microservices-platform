@@ -2,17 +2,27 @@
   "name": "ecommerce-platform",
   "version": "1.0.0",
   "main": "index.js",
-    "private": true,
+  "private": true,
   "description": "A learning-first microservices e-commerce platform",
   "workspaces": [
+    "api-gateway",
     "services/*"
   ],
   "scripts": {
     "dev:gateway": "npm run dev --workspace=api-gateway",
     "dev:catalog": "npm run dev --workspace=catalog-service",
+    "dev:cart": "npm run dev --workspace=cart-service",
+    "dev:order": "npm run dev --workspace=order-service",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.2"
+  }
 }

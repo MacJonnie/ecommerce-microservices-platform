@@ -55,3 +55,25 @@ export const catalogServiceProxy = createProxyMiddleware({
     return `/api/products${path}`;
   },
 });
+
+// Cart Service
+export const cartServiceProxy = createProxyMiddleware({
+  target: services.cartService,
+
+  ...commonProxyOptions,
+
+  pathRewrite: (path) => {
+    return `/api/cart${path}`;
+  },
+});
+
+// Order Service
+export const orderServiceProxy = createProxyMiddleware({
+  target: services.orderService,
+
+  ...commonProxyOptions,
+
+  pathRewrite: (path) => {
+    return `/api/orders${path}`;
+  },
+});

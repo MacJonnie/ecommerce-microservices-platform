@@ -13,10 +13,14 @@ services:
       PORT: 3000
       USER_SERVICE_URL: http://user-service:3001
       CATALOG_SERVICE_URL: http://catalog-service:3002
+      CART_SERVICE_URL: http://cart-service:3003
+      ORDER_SERVICE_URL: http://order-service:3004
 
     depends_on:
       - user-service
       - catalog-service
+      - cart-service
+      - order-service
 
     networks:
       - ecommerce-network
@@ -59,6 +63,47 @@ services:
       CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
       CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
       CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+
+    networks:
+      - ecommerce-network
+
+
+  cart-service:
+    build:
+      context: ./services/cart-service
+      dockerfile: Dockerfile
+
+    ports:
+      - "3003:3003"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      MONGODB_CONNECTION: ${CART_MONGODB_CONNECTION}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+
+    networks:
+      - ecommerce-network
+
+
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+
+    ports:
+      - "3004:3004"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      MONGODB_CONNECTION: ${ORDER_MONGODB_CONNECTION}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      CATALOG_SERVICE_URL: http://catalog-service:3002
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+
+    depends_on:
+      - catalog-service
 
     networks:
       - ecommerce-network
