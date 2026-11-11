@@ -61,11 +61,15 @@ export const reserveInventory = (reservationId, items) =>
 
 // Requests the Catalog Service to release stock associated
 // with an existing inventory reservation.
-export const releaseInventory = (reservationId, items) =>
-  post("/internal/inventory/releases", {
+// TEMPORARY TEST: Simulate inventory-release failure.
+export const releaseInventory = async (reservationId, items) => {
+
+  return post("/internal/inventory/releases", {
     reservationId,
     items,
   });
+};
+
 
 // Retrieves a product's details from the Catalog Service
 // using its product ID.

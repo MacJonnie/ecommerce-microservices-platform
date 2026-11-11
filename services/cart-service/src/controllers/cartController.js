@@ -21,6 +21,7 @@ export async function getCart(req, res, next) {
     });
   } catch (error) {
     // Forward unexpected errors to the central error-handling middleware.
+    if (error.name === "VersionError") return res.status(409).json({ success:false, message:"Cart changed concurrently. Please retry." });
     next(error);
   }
 }
@@ -107,6 +108,7 @@ export async function addCartItem(req, res, next) {
     });
   } catch (error) {
     // Forward unexpected errors to the central error handler.
+    if (error.name === "VersionError") return res.status(409).json({ success:false, message:"Cart changed concurrently. Please retry." });
     next(error);
   }
 }
@@ -177,6 +179,7 @@ export async function updateCartItem(req, res, next) {
     });
   } catch (error) {
     // Forward unexpected errors to the central error handler.
+    if (error.name === "VersionError") return res.status(409).json({ success:false, message:"Cart changed concurrently. Please retry." });
     next(error);
   }
 }
@@ -235,6 +238,7 @@ export async function removeCartItem(req, res, next) {
     });
   } catch (error) {
     // Forward unexpected errors to the central error handler.
+    if (error.name === "VersionError") return res.status(409).json({ success:false, message:"Cart changed concurrently. Please retry." });
     next(error);
   }
 }
@@ -248,7 +252,7 @@ export async function clearCart(req, res, next) {
     // setDefaultsOnInsert applies schema defaults when creating a cart.
     const cart = await Cart.findOneAndUpdate(
       { userId: req.user.userId },
-      { $set: { items: [] } },
+      { $set: { items: [] }, $inc: { revision: 1 } },
       {
         new: true,
         upsert: true,
@@ -263,6 +267,7 @@ export async function clearCart(req, res, next) {
     });
   } catch (error) {
     // Forward unexpected errors to the central error handler.
+    if (error.name === "VersionError") return res.status(409).json({ success:false, message:"Cart changed concurrently. Please retry." });
     next(error);
   }
 }

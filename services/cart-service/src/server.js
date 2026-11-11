@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 
 import { connectDB } from "./config/db.js";
 import cartRoutes from "./routes/cartRoutes.js";
+import internalCartRoutes from "./routes/internalCartRoutes.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3003);
@@ -32,6 +33,9 @@ app.get("/health", (_req, res) => {
 
 // Cart API routes.
 app.use("/api/cart", cartRoutes);
+// Internal service communication
+app.use("/internal/carts", internalCartRoutes);
+
 
 // Handle unknown routes.
 app.use((req, res) => {

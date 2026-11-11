@@ -1,12 +1,20 @@
 
 import crypto from "node:crypto";
 import mongoose from "mongoose";
+
 import Order from "../model/Order.js";
+import CheckoutAttempt from "../model/CheckoutAttempt.js";
+
 import {
   getProduct,
   reserveInventory,
   releaseInventory,
 } from "../service/catalogClient.js";
+
+import {
+  getCart,
+  clearCart,
+} from "../service/cartClient.js";
 
 // Required fields for a valid shipping address.
 const addressFields = [
@@ -19,55 +27,189 @@ const addressFields = [
   "postalCode",
 ];
 
-// Validates that the address contains every required field
-// and that each field is a non-empty string.
-function validAddress(value) {
-  return (
-    value &&
-    addressFields.every(
-      (k) =>
-        typeof value[k] === "string" &&
-        value[k].trim().length > 0
-    )
+// Validate that all required address fields are non-empty strings.
+const validAddress = (v) =>
+  v &&
+  addressFields.every(
+    (k) => typeof v[k] === "string" && v[k].trim().length > 0
   );
+
+// Generate a SHA-256 hash for request fingerprinting.
+const hash = (value) =>
+  crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+// Compare hashes securely to prevent timing-based comparisons.
+const safeEqual = (a, b) =>
+  a.length === b.length &&
+  crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+// Normalize shipping address fields before storing or hashing.
+function normalizeAddress(address) {
+  const out = {};
+
+  for (const k of [...addressFields, "line2"]) {
+    if (address[k] !== undefined) {
+      out[k] = String(address[k]).trim();
+    }
+  }
+
+  return out;
 }
 
-// Creates a new order after validating the request,
-// retrieving product details, and reserving inventory.
+// Extract product IDs and quantities from an existing order.
+// Used when releasing reserved inventory during cancellation.
+function reservationItemsFromOrder(order) {
+  return order.items.map((i) => ({
+    productId: String(i.productId),
+    quantity: i.quantity,
+  }));
+}
+
+// Create an order using the customer's cart.
 export async function createOrder(req, res, next) {
-  // Generate a unique ID to track this inventory reservation across the Order Service and Catalog Service.
-  const reservationId = crypto.randomUUID();
-  let reserved = false;
+  const userId = String(req.user.userId);
+
+  // Read the idempotency key supplied by the client.
+  const key = req.get("Idempotency-Key");
+
+  // Require a valid idempotency key between 8 and 128 characters.
+  if (
+    typeof key !== "string" ||
+    key.length < 8 ||
+    key.length > 128 ||
+    !/^[\w.:=-]+$/.test(key)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Provide an Idempotency-Key header (8–128 safe characters).",
+    });
+  }
+
+  // Validate the shipping address supplied in the request.
+  const { shippingAddress } = req.body ?? {};
+
+  if (!validAddress(shippingAddress)) {
+    return res.status(400).json({
+      success: false,
+      message: "A complete shippingAddress is required.",
+    });
+  }
+
+  // Normalize the address and create a request fingerprint.
+  const normalizedAddress = normalizeAddress(shippingAddress);
+  const requestHash = hash(normalizedAddress);
+
+  // Track checkout progress and inventory reservation state.
+let attempt,
+  reserved = false,
+  orderCreated = false,
+  cartConflict = false,
+  reservationId = crypto.randomUUID(),
+  reservationItems = [];
 
   try {
-    const { items, shippingAddress } = req.body ?? {};
+    // Create a checkout attempt for this idempotency key.
+    try {
+      attempt = await CheckoutAttempt.create({
+        userId,
+        idempotencyKey: key,
+        requestHash,
+        reservationId,
+      });
+    } catch (e) {
+      // Handle duplicate idempotency keys.
+      if (e.code !== 11000) throw e;
 
-    // Ensure the request contains between 1 and 50 order items.
-    if (
-      !Array.isArray(items) ||
-      items.length < 1 ||
-      items.length > 50
-    ) {
-      return res.status(400).json({
+      attempt = await CheckoutAttempt.findOne({
+        userId,
+        idempotencyKey: key,
+      });
+
+      if (!attempt) throw e;
+
+      // Prevent reusing a key with a different shipping address.
+      if (!safeEqual(attempt.requestHash, requestHash)) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "This Idempotency-Key was already used with a different shipping address.",
+        });
+      }
+
+      // Find the order created by the original checkout attempt.
+      const prior = attempt.orderId
+        ? await Order.findById(attempt.orderId).lean()
+        : await Order.findOne({ userId, idempotencyKey: key }).lean();
+
+      // If the order already exists, return it instead of creating another.
+      if (prior) {
+        await CheckoutAttempt.updateOne(
+          { _id: attempt._id },
+          {
+            $set: {
+              orderId: prior._id,
+              state:
+                attempt.state === "reserved"
+                  ? "order_created"
+                  : attempt.state,
+              nextAttemptAt: new Date(),
+            },
+          }
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Idempotent checkout replay.",
+          order: prior,
+          cartCleared: attempt.state === "completed",
+          replayed: true,
+        });
+      }
+
+      // Existing attempt is still processing or requires recovery.
+      return res.status(409).json({
         success: false,
-        message: "items must contain between 1 and 50 entries.",
+        message:
+          "Checkout with this Idempotency-Key is still processing or requires recovery.",
+        state: attempt.state,
       });
     }
 
-    // Validate the shipping address before processing the order.
-    if (!validAddress(shippingAddress)) {
+    // Retrieve the customer's current cart.
+    const cart = await getCart(userId);
+    const cartItems = cart.items;
+
+    // Capture the cart revision used during checkout.
+    const cartRevision = Number.isInteger(cart.revision)
+      ? cart.revision
+      : 0;
+
+    // Reject checkout when the cart is empty.
+    if (!cartItems.length) {
+      await CheckoutAttempt.updateOne(
+        { _id: attempt._id },
+        { $set: { state: "failed", lastError: "Cart is empty" } }
+      );
+
       return res.status(400).json({
         success: false,
-        message: "A complete shippingAddress is required.",
+        message: "Your cart is empty.",
       });
     }
 
-    // Use a Map to combine duplicate product IDs into one entry.
-    // This prevents the same product from being processed multiple times.
+    // Restrict the maximum number of cart entries.
+    if (cartItems.length > 50) {
+      throw Object.assign(
+        new Error("Cart contains too many items."),
+        { statusCode: 400 }
+      );
+    }
+
+    // Normalize cart items by product ID.
+    // This combines duplicate product entries into one quantity.
     const normalized = new Map();
 
-    for (const item of items) {
-      // Validate the product ID and ensure the quantity is an integer between 1 and 100.
+    for (const item of cartItems) {
       if (
         !item ||
         !mongoose.isValidObjectId(item.productId) ||
@@ -75,45 +217,47 @@ export async function createOrder(req, res, next) {
         item.quantity < 1 ||
         item.quantity > 100
       ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Each item requires a valid productId and integer quantity between 1 and 100.",
-        });
+        throw Object.assign(
+          new Error("Your cart contains an invalid item."),
+          { statusCode: 409 }
+        );
       }
 
       const id = String(item.productId);
 
-      // Add the quantity to any existing quantity for this product.
       normalized.set(
         id,
         (normalized.get(id) || 0) + item.quantity
       );
     }
 
-    // Validate the combined quantity after duplicate products
-    // have been merged.
+    // Ensure combined quantities remain within the permitted limit.
     if ([...normalized.values()].some((q) => q > 100)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Combined quantity for a product cannot exceed 100.",
-      });
+      throw Object.assign(
+        new Error("Combined cart quantity cannot exceed 100."),
+        { statusCode: 409 }
+      );
     }
 
-    // Retrieve product details from the Catalog Service.
-    // Promise.all allows independent product requests to run concurrently.
-    const productDocs = await Promise.all(
+    // Fetch product details from the Catalog Service.
+    // Validate product availability and price.
+    const products = await Promise.all(
       [...normalized.keys()].map(async (productId) => {
         const product = await getProduct(productId);
 
-        // Prevent ordering products that are inactive.
         if (!product.isActive) {
-          const e = new Error(
-            `Product ${productId} is unavailable.`
+          throw Object.assign(
+            new Error(`Product ${productId} is unavailable.`),
+            { statusCode: 409 }
           );
-          e.statusCode = 409;
-          throw e;
+        }
+
+        const price = Number(product.price);
+
+        if (!Number.isSafeInteger(price) || price < 0) {
+          throw new Error(
+            `Catalog returned invalid integer NGN price for ${productId}.`
+          );
         }
 
         return {
@@ -123,94 +267,165 @@ export async function createOrder(req, res, next) {
       })
     );
 
-    // Create order-item snapshots using the current product details.
-    // These values are stored with the order so its item details and
-    // prices are preserved even if the product changes later.
-    const orderItems = productDocs.map(
-      ({ product, quantity }) => ({
-        productId: product._id,
-        name: product.name,
-        sku: product.sku ?? null,
-        unitPrice: Number(product.price),
-        quantity,
-        imageUrl: product.images?.[0]?.url ?? null,
-      })
-    );
+    // Create immutable product snapshots for the order.
+    const items = products.map(({ product, quantity }) => ({
+      productId: product._id,
+      name: product.name,
+      sku: product.sku ?? null,
+      unitPrice: Number(product.price),
+      quantity,
+      imageUrl: product.images?.[0]?.url ?? null,
+    }));
 
-    // Calculate the total cost of all items before any shipping fees
-    // or other additional charges.
-    const subtotal = orderItems.reduce(
-      (sum, item) => sum + item.unitPrice * item.quantity,
+    // Calculate the order subtotal.
+    const subtotal = items.reduce(
+      (sum, i) => sum + i.unitPrice * i.quantity,
       0
     );
 
-    // Prepare the product IDs and quantities required by the
-    // Catalog Service to reserve inventory.
-    const reservationItems = orderItems.map((item) => ({
-      productId: String(item.productId),
-      quantity: item.quantity,
+    // Ensure subtotal does not exceed safe integer precision.
+    if (!Number.isSafeInteger(subtotal)) {
+      throw Object.assign(
+        new Error("Order subtotal exceeds supported money precision."),
+        { statusCode: 400 }
+      );
+    }
+
+    // Prepare the inventory reservation payload.
+    reservationItems = items.map((i) => ({
+      productId: String(i.productId),
+      quantity: i.quantity,
     }));
 
-    // Request an inventory reservation before saving the order.
-    // Set the flag only after the reservation request succeeds.
+    // Persist the cart revision and reservation items
+    // before attempting inventory reservation.
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id },
+      { $set: { cartRevision, reservationItems } }
+    );
+
+    // Reserve inventory from the Catalog Service.
     await reserveInventory(reservationId, reservationItems);
     reserved = true;
 
-    try {
-      // Persist the order after inventory has been reserved.
-      const order = await Order.create({
-        userId: String(req.user.userId),
-        items: orderItems,
-        subtotal,
-        shippingAddress,
-        reservationId,
-        status: "pending",
-      });
+    // Record that inventory reservation succeeded.
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id },
+      { $set: { state: "reserved" } }
+    );
 
-      return res.status(201).json({
-        success: true,
-        message: "Order created. Payment has not been taken.",
-        order,
-      });
-    } catch (persistError) {
-      // If saving the order fails after inventory was reserved,
-      // attempt to release the reserved stock as compensation.
-      try {
-        await releaseInventory(reservationId, reservationItems);
-        reserved = false;
-      } catch (releaseError) {
-        // Log the failure because inventory may need manual
-        // reconciliation if the compensation request fails.
+    // Create the order using the captured cart snapshot.
+    const order = await Order.create({
+      userId,
+      items,
+      subtotal,
+      currency: "NGN",
+      shippingAddress: normalizedAddress,
+      reservationId,
+      idempotencyKey: key,
+      cartRevision,
+      status: "pending",
+    });
+
+    orderCreated = true;
+
+    // Record the newly created order in the checkout attempt.
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id },
+      { $set: { orderId: order._id, state: "order_created" } }
+    );
+
+    // Attempt to clear only the cart revision used for checkout.
+    let cartCleared = false;
+
+    try {
+      const result = await clearCart(userId, cartRevision);
+
+      cartCleared = result.cleared === true;
+    } catch (e) {
+      // If the cart revision changed, preserve the newer cart.
+      if (e.statusCode === 409) {
+        cartCleared = false;
+        cartConflict = true;
+      } else {
         console.error(
-          "CRITICAL: inventory compensation failed",
-          {
-            reservationId,
-            error: releaseError.message,
-          }
+          "Cart clear needs retry/reconciliation:",
+          e.message
         );
       }
-
-      throw persistError;
     }
+
+    // Update the checkout attempt based on cart clearing outcome.
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id },
+      {
+        $set: {
+          state: cartCleared
+            ? "completed"
+            : cartConflict
+              ? "cart_changed"
+              : "order_created",
+          lastError: cartCleared
+            ? null
+            : "Cart clear pending or cart changed",
+          nextAttemptAt: new Date(Date.now() + 15000),
+        },
+      }
+    );
+
+    // Return the successfully created order.
+    return res.status(201).json({
+      success: true,
+      message: "Order created. Payment has not been taken.",
+      order,
+      cartCleared,
+    });
   } catch (error) {
-    // Return a 404 when the requested product cannot be found.
-    if (error.statusCode === 404) {
-      return res.status(404).json({
+    // Compensate for inventory reservation if order creation failed.
+    if (reserved && !orderCreated) {
+      try {
+        await releaseInventory(reservationId, reservationItems);
+
+        await CheckoutAttempt.updateOne(
+          { _id: attempt?._id },
+          { $set: { state: "failed", lastError: error.message } }
+        );
+      } catch (releaseError) {
+        // Persist failed compensation for background recovery.
+        await CheckoutAttempt.updateOne(
+          { _id: attempt?._id },
+          {
+            $set: {
+              state: "compensation_pending",
+              lastError: releaseError.message,
+              nextAttemptAt: new Date(Date.now() + 5000),
+            },
+          }
+        ).catch(() => {});
+
+        console.error(
+          "Durable inventory compensation queued",
+          reservationId,
+          releaseError.message
+        );
+      }
+    } else if (attempt && !orderCreated) {
+      // Record checkout failure when no order was created.
+      await CheckoutAttempt.updateOne(
+        { _id: attempt._id },
+        { $set: { state: "failed", lastError: error.message } }
+      ).catch(() => {});
+    }
+
+    // Return known application errors directly.
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
         success: false,
         message: error.message,
       });
     }
 
-    // Return a 409 for conflicts such as unavailable products
-    // or insufficient inventory.
-    if (error.statusCode === 409) {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    // Handle Mongoose schema validation errors as bad requests.
+    // Handle Mongoose validation errors.
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
@@ -218,54 +433,38 @@ export async function createOrder(req, res, next) {
       });
     }
 
-    // If inventory was reserved but the operation encountered
-    // an unexpected failure, flag it for possible reconciliation.
-    if (reserved) {
-      console.error(
-        "Inventory reservation may require reconciliation",
-        { reservationId }
-      );
-    }
-
-    // Pass unexpected errors to the application's error handler.
+    // Pass unexpected errors to centralized error middleware.
     return next(error);
   }
 }
 
-// Retrieves a paginated list of orders.
-// Regular users see their own orders; admins can request all orders.
+// Retrieve paginated orders.
+// Admins can retrieve all orders by specifying all=true.
 export async function listOrders(req, res, next) {
   try {
-    // Parse the page number, defaulting to page 1.
     const page = Math.max(
       1,
       Number.parseInt(req.query.page, 10) || 1
     );
 
-    // Limit each response to a maximum of 100 orders.
     const limit = Math.min(
       100,
-      Math.max(
-        1,
-        Number.parseInt(req.query.limit, 10) || 10
-      )
+      Math.max(1, Number.parseInt(req.query.limit, 10) || 10)
     );
 
-    // Only admins requesting all=true can retrieve every user's orders.
-    // Otherwise, restrict the query to the authenticated user.
+    // Restrict results to the current user unless admin requests all.
     const filter =
-      req.user.role === "admin" &&
-      req.query.all === "true"
+      req.user.role === "admin" && req.query.all === "true"
         ? {}
         : { userId: String(req.user.userId) };
 
-    // Fetch the requested page and total matching order count concurrently.
+    // Fetch orders and total count concurrently.
     const [orders, total] = await Promise.all([
       Order.find(filter)
-        .sort({ createdAt: -1 }) // Show newest orders first.
-        .skip((page - 1) * limit) // Skip orders from previous pages.
-        .limit(limit) // Restrict the number of returned orders.
-        .lean(), // Return plain JavaScript objects instead of Mongoose documents.
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
 
       Order.countDocuments(filter),
     ]);
@@ -281,15 +480,14 @@ export async function listOrders(req, res, next) {
       },
     });
   } catch (e) {
-    // Forward unexpected errors to the central error handler.
     next(e);
   }
 }
 
-// Retrieves a single order by its MongoDB ID.
+// Retrieve a single order by ID.
 export async function getOrder(req, res, next) {
   try {
-    // Reject malformed order IDs before querying MongoDB.
+    // Validate the supplied MongoDB ObjectId.
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({
         success: false,
@@ -297,7 +495,7 @@ export async function getOrder(req, res, next) {
       });
     }
 
-    // Find the order and return it as a plain JavaScript object.
+    // Find the requested order.
     const order = await Order.findById(req.params.id).lean();
 
     if (!order) {
@@ -307,7 +505,7 @@ export async function getOrder(req, res, next) {
       });
     }
 
-    // Allow access only to the order's owner or an administrator.
+    // Only the order owner or an admin can access it.
     if (
       String(order.userId) !== String(req.user.userId) &&
       req.user.role !== "admin"
@@ -318,20 +516,16 @@ export async function getOrder(req, res, next) {
       });
     }
 
-    return res.json({
-      success: true,
-      order,
-    });
+    return res.json({ success: true, order });
   } catch (e) {
-    // Forward unexpected errors to the central error handler.
     next(e);
   }
 }
 
-// Cancels a pending order and requests the release of its inventory.
+// Cancel an order and release its reserved inventory.
 export async function cancelOrder(req, res, next) {
   try {
-    // Validate the order ID before looking up the order.
+    // Validate the order ID.
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({
         success: false,
@@ -339,66 +533,86 @@ export async function cancelOrder(req, res, next) {
       });
     }
 
-    // Find an order belonging to the authenticated user.
-    const order = await Order.findOne({
-      _id: req.params.id,
-      userId: String(req.user.userId),
-    });
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found.",
-      });
-    }
-
-    // Only pending orders can be cancelled.
-    if (order.status !== "pending") {
-      return res.status(409).json({
-        success: false,
-        message: "Only pending orders can be cancelled.",
-      });
-    }
-
-    // A reservation ID is required to identify the inventory
-    // that must be released in the Catalog Service.
-    if (!order.reservationId) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Order has no inventory reservation record; manual reconciliation is required.",
-      });
-    }
-
-    // Request the Catalog Service to release the reserved stock.
-    await releaseInventory(
-      order.reservationId,
-      order.items.map((i) => ({
-        productId: String(i.productId),
-        quantity: i.quantity,
-      }))
+    // Atomically transition pending order to cancellation_pending.
+    // This prevents multiple concurrent cancellation attempts.
+    const order = await Order.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        userId: String(req.user.userId),
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "cancellation_pending",
+          cancellationReason:
+            typeof req.body?.reason === "string"
+              ? req.body.reason.trim().slice(0, 500)
+              : undefined,
+        },
+      },
+      { new: true, runValidators: true }
     );
 
-    // Update the order only after the inventory release request succeeds.
-    order.status = "cancelled";
-    order.stockReleasedAt = new Date();
+    // If the atomic update failed, determine why.
+    if (!order) {
+      const current = await Order.findOne({
+        _id: req.params.id,
+        userId: String(req.user.userId),
+      }).lean();
 
-    // Save an optional cancellation reason, trimming whitespace
-    // and limiting the stored value to 500 characters.
-    order.cancellationReason =
-      typeof req.body?.reason === "string"
-        ? req.body.reason.trim().slice(0, 500)
-        : undefined;
+      if (!current) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found.",
+        });
+      }
 
-    await order.save();
+      return res.status(409).json({
+        success: false,
+        message: `Order cannot be cancelled from status '${current.status}'.`,
+      });
+    }
 
-    return res.json({
-      success: true,
-      message: "Order cancelled and stock released.",
-      order,
-    });
+    try {
+      // Release inventory reserved for the order.
+      await releaseInventory(
+        order.reservationId,
+        reservationItemsFromOrder(order)
+      );
+
+      // Mark the order cancelled after inventory release succeeds.
+      const cancelled = await Order.findOneAndUpdate(
+        { _id: order._id, status: "cancellation_pending" },
+        {
+          $set: {
+            status: "cancelled",
+            stockReleasedAt: new Date(),
+          },
+        },
+        { new: true }
+      );
+
+      return res.json({
+        success: true,
+        message: "Order cancelled and stock released.",
+        order: cancelled,
+      });
+    } catch (error) {
+      // Leave cancellation_pending for background recovery.
+      console.error(
+        "Cancellation queued for durable recovery",
+        String(order._id),
+        error.message
+      );
+
+      return res.status(202).json({
+        success: true,
+        message:
+          "Cancellation accepted; inventory release is pending recovery.",
+        order,
+      });
+    }
   } catch (e) {
-    // Forward unexpected errors to the central error handler.
     next(e);
   }
 }

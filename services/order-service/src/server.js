@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 
 import { connectDB } from "./config/db.js";
 import orderRoutes from "./routes/orderRoutes.js";
+import { startReconciliationWorker } from "./workers/reconciliationWorker.js";
 
 const app = express();
 
@@ -50,9 +51,12 @@ app.use((err, _req, res, _next) => {
 const port = Number(process.env.PORT || 3004);
 
 let server;
+let stopWorker;
 
 try {
   await connectDB();
+
+  stopWorker = startReconciliationWorker();
 
   server = app.listen(port, () =>
     console.info(`Order Service listening on ${port}`)
@@ -65,6 +69,7 @@ try {
 async function shutdown(signal) {
   console.info(`${signal} received; shutting down Order Service`);
 
+  stopWorker?.();
   server?.close(async () => {
     await mongoose.disconnect();
     process.exit(0);

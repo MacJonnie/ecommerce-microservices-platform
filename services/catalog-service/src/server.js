@@ -8,6 +8,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 
 import productRoutes from "./routes/productRoutes.js";
+import inventoryRoutes from "./routes/inventoryRoutes.js";
 import connectDB from "./config/db.js";
 import errorMiddleware from "./middleware/errorMiddleware.js";
 
@@ -21,6 +22,7 @@ const PORT = process.env.PORT || 3002;
 app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
+app.use("/internal/inventory", inventoryRoutes);
  
 // Connect to database
 await connectDB();
@@ -34,8 +36,12 @@ app.get("/health", (req, res) => {
   });
 });
 
+
 // Product Routes
-app.use("/api/products", productRoutes)
+app.use("/api/products", productRoutes);
+// Internal Inventory Routes
+app.use("/internal/inventory", inventoryRoutes);
+
 
 // Error handler
 app.use(errorMiddleware);
