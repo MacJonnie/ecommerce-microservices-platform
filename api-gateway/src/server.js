@@ -11,6 +11,8 @@ import {
   catalogServiceProxy,
   cartServiceProxy,
   orderServiceProxy,
+  paymentServiceProxy,
+  paystackWebhookProxy,
 } from "./routes/proxyRoutes.js";
 
 import errorMiddleware from "./middleware/errorMiddleware.js";
@@ -98,6 +100,16 @@ app.use(
   "/api/orders",
   orderServiceProxy
 );
+
+// Public payment API is forwarded to Payment Service.
+app.use(
+  "/api/payments",
+  paymentServiceProxy);
+
+// Paystack webhook is forwarded unchanged for raw-body signature validation.
+app.use(
+  "/webhooks/paystack",
+  paystackWebhookProxy);
 
 // Unknown route handler.
 // Returns 404 when no registered gateway route matches.

@@ -89,3 +89,25 @@ export const orderServiceProxy = createProxyMiddleware({
     return `/api/orders${path}`;
   },
 });
+
+
+// Payment Service proxy.
+// Forward requests to the Payment Service with the /api/payments prefix.
+export const paymentServiceProxy = createProxyMiddleware({
+  target: services.paymentService,
+
+  ...commonProxyOptions,
+
+  pathRewrite: (path) => {
+    return `/api/payments${path}`;
+  },
+});
+
+// Paystack webhook proxy. 
+// So Payment Service can verify the raw request body and signature.
+export const paystackWebhookProxy = createProxyMiddleware({
+  target: services.paymentService,
+  ...commonProxyOptions,
+  // Express strips the mount prefix; restore the Paystack webhook path.
+  pathRewrite: (path) => `/webhooks/paystack${path === "/" ? "" : path}`,
+});

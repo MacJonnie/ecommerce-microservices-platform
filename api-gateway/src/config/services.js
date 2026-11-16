@@ -5,6 +5,7 @@ const requiredEnvironmentVariables = [
   "CATALOG_SERVICE_URL",
   "CART_SERVICE_URL",
   "ORDER_SERVICE_URL",
+  "PAYMENT_SERVICE_URL"
 ];
 
 for (const variable of requiredEnvironmentVariables) {
@@ -20,6 +21,7 @@ const services = {
   catalogService: process.env.CATALOG_SERVICE_URL,
   cartService: process.env.CART_SERVICE_URL,
   orderService: process.env.ORDER_SERVICE_URL,
+  paymentService: process.env.PAYMENT_SERVICE_URL,
 };
 
 export default services;
