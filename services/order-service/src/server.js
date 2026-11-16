@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 
 import { connectDB } from "./config/db.js";
 import orderRoutes from "./routes/orderRoutes.js";
+import internalOrderRoutes from "./routes/internalOrderRoutes.js";
 import { startReconciliationWorker } from "./workers/reconciliationWorker.js";
 
 const app = express();
@@ -28,6 +29,10 @@ app.get("/health", (_req, res) =>
 );
 
 app.use("/api/orders", orderRoutes);
+
+// Internal endpoints are protected by a shared service token and
+// must not be routed through the public API Gateway.
+app.use("/internal/orders", internalOrderRoutes);
 
 app.use((req, res) =>
   res.status(404).json({

@@ -1,0 +1,1 @@
+import {Router} from "express";import auth from "../middleware/internalAuth.js";import {enqueue} from "../controllers/notificationController.js";const r=Router();r.use(auth);r.post("/",enqueue);export default r;

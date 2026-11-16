@@ -15,6 +15,7 @@ import {
   getCart,
   clearCart,
 } from "../service/cartClient.js";
+import { enqueueNotification } from "../service/notificationClient.js";
 
 // Required fields for a valid shipping address.
 const addressFields = [
@@ -373,6 +374,23 @@ let attempt,
       }
     );
 
+    // Enqueue order confirmation without making checkout depend on SMTP.
+    try {
+      await enqueueNotification({
+        event: "order.created",
+        userId,
+        orderId: String(order._id),
+        amount: order.subtotal * 100, // Notification templates receive Kobo.
+        currency: order.currency,
+        idempotencyKey: `order.created:${order._id}`,
+      });
+    } catch (notificationError) {
+      console.error(
+        "Order confirmation enqueue failed:",
+        notificationError.message
+      );
+    }
+
     // Return the successfully created order.
     return res.status(201).json({
       success: true,
@@ -591,6 +609,21 @@ export async function cancelOrder(req, res, next) {
         },
         { new: true }
       );
+
+      // Notify the customer after cancellation and stock release succeed.
+      try {
+        await enqueueNotification({
+          event: "order.cancelled",
+          userId: String(order.userId),
+          orderId: String(order._id),
+          idempotencyKey: `order.cancelled:${order._id}`,
+        });
+      } catch (notificationError) {
+        console.error(
+          "Order cancellation notification enqueue failed:",
+          notificationError.message
+        );
+      }
 
       return res.json({
         success: true,

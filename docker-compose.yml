@@ -15,12 +15,14 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:3002
       CART_SERVICE_URL: http://cart-service:3003
       ORDER_SERVICE_URL: http://order-service:3004
+      PAYMENT_SERVICE_URL: http://payment-service:3005
 
     depends_on:
       - user-service
       - catalog-service
       - cart-service
       - order-service
+      - payment-service
 
     networks:
       - ecommerce-network
@@ -42,6 +44,7 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
 
     networks:
       - ecommerce-network
@@ -101,6 +104,7 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       CATALOG_SERVICE_URL: http://catalog-service:3002
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      NOTIFICATION_SERVICE_URL: http://notification-service:3006
 
     depends_on:
       - catalog-service
@@ -108,6 +112,54 @@ services:
     networks:
       - ecommerce-network
 
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    ports:
+      - "3005:3005"
+    environment:
+      NODE_ENV: production
+      PORT: 3005
+      MONGODB_CONNECTION: ${PAYMENT_MONGODB_CONNECTION}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      ORDER_SERVICE_URL: http://order-service:3004
+      USER_SERVICE_URL: http://user-service:3001
+      NOTIFICATION_SERVICE_URL: http://notification-service:3006
+      PAYSTACK_BASE_URL: ${PAYSTACK_BASE_URL:-https://api.paystack.co}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
+      PAYMENT_CALLBACK_URL: ${PAYMENT_CALLBACK_URL}
+    depends_on:
+      - order-service
+      - user-service
+      - notification-service
+    networks:
+      - ecommerce-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    ports:
+      - "3006:3006"
+    environment:
+      NODE_ENV: production
+      PORT: 3006
+      MONGODB_CONNECTION: ${NOTIFICATION_MONGODB_CONNECTION}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      USER_SERVICE_URL: http://user-service:3001
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      EMAIL_FROM: ${EMAIL_FROM}
+    depends_on:
+      - user-service
+    networks:
+      - ecommerce-network
 
 networks:
   ecommerce-network:

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "private": true,
-  "description": "A learning-first microservices e-commerce platform",
+  "description": "A microservices e-commerce platform",
   "workspaces": [
     "api-gateway",
     "services/*"
@@ -13,7 +13,10 @@
     "dev:catalog": "npm run dev --workspace=catalog-service",
     "dev:cart": "npm run dev --workspace=cart-service",
     "dev:order": "npm run dev --workspace=order-service",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev:payment": "npm run dev --workspace=payment-service",
+    "dev:notification": "npm run dev --workspace=notification-service",
+    "dev:user": "npm run dev --workspace=user-service"
   },
   "keywords": [],
   "author": "",

@@ -3,6 +3,7 @@ import express from "express"
 import dotenv from "dotenv"
 import connectDB from "./config/db.js"
 import userRoutes from "./routes/userRoutes.js";
+import internalUserRoutes from "./routes/internalUserRoutes.js";
 import cookieParser from "cookie-parser";
 
 
@@ -19,6 +20,9 @@ app.use(express.urlencoded ({
 app.use(cookieParser());
 
 app.use("/api/users", userRoutes);
+
+// Private user lookup used by trusted services (Payment/Notification).
+app.use("/internal/users", internalUserRoutes);
 
 app.get("/health", (req, res) => {
   res.status(200).json({

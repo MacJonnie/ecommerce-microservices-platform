@@ -1,0 +1,1 @@
+export default function internalAuth(req,res,next){if(!process.env.INTERNAL_SERVICE_TOKEN||req.get("x-internal-service-token")!==process.env.INTERNAL_SERVICE_TOKEN)return res.status(401).json({success:false,message:"Unauthorized internal request"});next();}
